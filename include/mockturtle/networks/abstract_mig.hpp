@@ -43,122 +43,219 @@ class abstract_mig_network
 {
 public:
 #pragma region Types and constructors
-  static constexpr auto min_fanin_size = /* TODO */;
+  static constexpr auto min_fanin_size = 3u; 
   static constexpr auto max_fanin_size = std::numeric_limits<uint32_t>::max();
 
   using base_type = abstract_mig_network;
   using node = uint32_t;
 
+/*
+  A signal represents an edge in the network
+*/
   struct signal
   {
-    // TODO
+    signal() = default;
+    signal(uint32_t index, bool complement=false):index(index), complement(complement)
+    {}
+
+    uint32_t index;   // index of the node that this edge is pointing to
+    bool complement;  // denoting whether the edge is complemented or not
 
     signal operator!() const
-    { /* TODO */ }
+    { 
+      return {index, !complement};
+    }
 
     signal operator+() const
-    { /* TODO */ }
+    { 
+      return {index, false};  // return the non-complemented signal
+    }
 
     signal operator-() const
-    { /* TODO */ }
+    { 
+      return {index, true}; // return the complemented signal
+    }
 
     signal operator^( bool complement ) const
-    { /* TODO */ }
+    {  
+      return {index, this->complement != complement}; // return the signal inverting the complemented
+    }
 
     bool operator==( signal const& other ) const
-    { /* TODO */ }
+    {  
+      return index == other.index && complement == other.complement;
+    }
 
     bool operator!=( signal const& other ) const
-    { /* TODO */ }
+    {  
+      return index != other.index || complement != other.complement;
+    }
 
     bool operator<( signal const& other ) const
-    { /* TODO */ }
+    {  
+      return index < other.index || (index == other.index && !complement && other.complement);
+    }
+    
   };
 
   struct storage_type
   {
-    // TODO
+    struct node_type {
+      std::vector<signal> fanin{}; // saves the input signals to a particular node  
+      uint32_t fanout_size{};  // number of outputs of the node
+    };   // represents a single node in the graph
+
+    storage_type()
+    {
+      /* constant 0 node */
+      nodes.emplace_back(); 
+    }
+
+    std::vector<node_type> nodes;
+    std::vector<uint32_t> inputs;  // indices of input nodes 
+    std::vector<signal> outputs; // saves all output signals of the network
   };
   using storage = std::shared_ptr<storage_type>;
 
   abstract_mig_network()
-  {
-    // TODO
-  }
+    : _storage( std::make_shared<storage_type>() )
+  {}
+
+  abstract_mig_network(std::shared_ptr<storage_type> storage)
+    :_storage(storage)
+  {}
+
 #pragma endregion
 
 #pragma region Primary I / O and constants
   signal get_constant( bool value ) const
   {
-    // TODO
+    return signal{0, value};  // index of a constant is always 0
   }
 
   signal create_pi( std::string const& name = std::string() )
   {
-    // TODO
+    (void)name;  // ignore the string name for now
+
+    // calculate the index from the size of the nodes vector
+    const auto index = static_cast<uint32_t>( _storage->nodes.size() );
+
+    // add a new empty entry to nodes vector, because it has no fanin and fanout is still unknown at that moment
+    _storage->nodes.emplace_back(); 
+
+    // the node is an input so add its index to the nodes vector
+    _storage->inputs.emplace_back( index );  // Since inputs vector holds the indices of input nodes
+
+    // return the signal (edge) coming out of your newly created node
+    return {index, 0}; // primary inputs aren't complemented initially
   }
 
   uint32_t create_po( signal const& f, std::string const& name = std::string() )
   {
-    // TODO
+    (void)name;  // ignore the string name for now
+
+    /* f denotes the output signal, the index in f denotes the node that this output will emerge from 
+       therefore, increase the fanout of the node at that index
+    */
+    _storage->nodes[f.index].fanout_size++;
+
+    // create an entry for this new output signal in outputs vector
+    auto const po_index = static_cast<uint32_t>( _storage->outputs.size() );
+    _storage->outputs.emplace_back( f );
+
+    return po_index;
   }
 
   bool is_pi( node const& n ) const
   {
-    // TODO
+    // note that node n denotes just an index of the node under question
+
+    // n has to be > 0  because index 0 is preserved for the constant
+    return n > 0 && _storage->nodes[n].fanin.size() == 0u;
   }
 
   bool constant_value( node const& n ) const
   {
-    // TODO
+    (void)n;
+    return false;     
   }
 #pragma endregion
 
 #pragma region Create binary functions
   signal create_and( signal a, signal b )
   {
-    // TODO
+    // since this maj will be only true if both a and b are true which is AND
+    return create_maj( get_constant( false ), a, b );
   }
 
   signal create_or( signal const& a, signal const& b )
   {
     // TODO
+    // since this maj will be true if at least a or b are true which is OR
+    return create_maj( get_constant( true ), a, b );
   }
 
   signal create_xor( signal const& a, signal const& b )
   {
-    // TODO
+    const auto fcompl = a.complement ^ b.complement;
+    const auto c1 = create_and( +a, -b );
+    const auto c2 = create_and( +b, -a );
+    return create_and( !c1, !c2 ) ^ !fcompl;
   }
 #pragma endregion
 
 #pragma region Create ternary functions
   signal create_maj( signal const& a, signal const& b, signal const& c )
   {
-    // TODO
+    std::vector<signal> fs;
+    fs.emplace_back(a);
+    fs.emplace_back(b);
+    fs.emplace_back(c);
+
+    return create_nary_maj( fs );
   }
 #pragma endregion
 
 #pragma region Create nary functions
   signal create_nary_maj( std::vector<signal> const& fs )
   {
-    // TODO
+    /*
+      if number of signals isn't odd, raise an error
+      if condition is false (when fs.size() is odd) an error is raised
+    */
+    assert((fs.size() % 2)==1);
+
+    const auto index = static_cast<uint32_t>( _storage->nodes.size() );
+
+    storage_type::node_type new_gate;
+    for(int i = 0; i < fs.size(); i++)
+    {
+      new_gate.fanin.emplace_back(fs.at(i));
+    }
+
+    _storage->nodes.emplace_back(new_gate);
+
+    // return the signal (edge) coming out of your newly created maj gate node
+    return {index, 0}; 
+
   }
 #pragma endregion
 
 #pragma region Nodes and signals
   node get_node( signal const& f ) const
   {
-    // TODO
+    // return the index stored in the passed signal f
+    return f.index;
   }
 
   bool is_complemented( signal const& f ) const
   {
-    // TODO
+    return f.complement;
   }
 
   uint32_t node_to_index( node const& n ) const
   {
-    // TODO
+    return static_cast<uint32_t>( n );
   }
 #pragma endregion
 
@@ -166,58 +263,68 @@ public:
   template<typename Fn>
   void foreach_pi( Fn&& fn ) const
   {
-    // TODO
+    detail::foreach_element( _storage->inputs.begin(), _storage->inputs.end(), fn );
   }
 
   template<typename Fn>
   void foreach_po( Fn&& fn ) const
   {
-    // TODO
+    detail::foreach_element( _storage->outputs.begin(), _storage->outputs.end(), fn );
   }
 
   template<typename Fn>
   void foreach_gate( Fn&& fn ) const
   {
-    // TODO
+    auto r = range<uint32_t>( 1u, _storage->nodes.size() ); /* start from 1 to avoid constants */
+    detail::foreach_element_if(
+        r.begin(), r.end(),
+        [this]( auto n ) { return !is_pi( n ); },
+        fn );
   }
 
   template<typename Fn>
   void foreach_fanin( node const& n, Fn&& fn ) const
   {
-    // TODO
+    if ( n == 0 || is_pi( n ) )
+      return;
+
+    // iterate over the fanin nodes of node n
+    detail::foreach_element( _storage->nodes.at(n).fanin.begin(), _storage->nodes.at(n).fanin.end(), fn );
   }
 #pragma endregion
 
 #pragma region Structural properties
   uint32_t size() const
   {
-    // TODO
+    return _storage->nodes.size(); // total number of nodes 
   }
 
   uint32_t num_pis() const
   {
-    // TODO
+    return static_cast<uint32_t>( _storage->inputs.size() );  // total number of inputs
   }
 
   uint32_t num_pos() const
   {
-    // TODO
+    return static_cast<uint32_t>( _storage->outputs.size() );  // total number of outputs
   }
 
   uint32_t num_gates() const
   {
-    // TODO
+    // size includes the maj gates + inputs + constant value that's why subtract the extra 1
+    return size() - num_pis() - 1;  // total number of majority gates  
   }
 
   uint32_t fanin_size( node const& n ) const
   {
-    // TODO
+    return _storage->nodes[n].fanin.size();
   }
 
   uint32_t fanout_size( node const& n ) const
   {
-    // TODO
+    return _storage->nodes[n].fanout_size;
   }
+
 #pragma endregion
 
 #pragma region Value simulation
@@ -238,7 +345,8 @@ public:
 #pragma endregion
 
 private:
-  // TODO : storage!
+  storage _storage;  // this is a shared_ptr pointing to storage_type struct
+
 };
 
 } // namespace mockturtle
